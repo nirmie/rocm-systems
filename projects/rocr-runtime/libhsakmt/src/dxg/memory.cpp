@@ -1222,10 +1222,21 @@ HSAKMT_STATUS HSAKMTAPI hsaKmtMemoryVaUnmap(HsaMemoryObjectHandle Handle,
 HSAKMT_STATUS HSAKMTAPI hsaKmtMemHandleFree(HsaMemoryObjectHandle Handle)
 {
 	CHECK_DXG_OPEN();
-  wsl::thunk::GpuMemory* gpu_mem = reinterpret_cast<wsl::thunk::GpuMemory*>(Handle);
-  if (!gpu_mem) {
-    return HSAKMT_STATUS_INVALID_HANDLE;
-  }
+	// Not implemented for DXG - return error
+	return HSAKMT_STATUS_NOT_IMPLEMENTED;
+}
+
+HSAKMT_STATUS HSAKMTAPI hsaKmtMemHandleFreePreserveMetadata(HsaMemoryObjectHandle Handle)
+{
+	CHECK_DXG_OPEN();
+	// On Windows/DXG, this behaves the same as hsaKmtMemHandleFree
+	// since the DXG implementation doesn't manage metadata separately.
+	// Used by IPC exporter path (IPCCreate) to release handle references
+	// without affecting metadata state.
+	wsl::thunk::GpuMemory* gpu_mem = reinterpret_cast<wsl::thunk::GpuMemory*>(Handle);
+	if (!gpu_mem) {
+		return HSAKMT_STATUS_INVALID_HANDLE;
+	}
 	return HSAKMT_STATUS_SUCCESS;
 }
 
