@@ -244,20 +244,26 @@ public:
         host_recv_data.resize(num_elements);
         host_send_data.resize(num_elements);
 
-        // Use RCCL point-to-point operations to validate SHM transport
-        const size_t count  = shm_config.buffer_size / sizeof(float);
-        const auto   result = shm_config.is_sender ? ncclSend(shm_config.send_buffer,
+        // Use RCCL point-to-point operations to validate SHM transport.
+        // ncclSend/ncclRecv must be bracketed with ncclGroupStart/End so that
+        // NCCL_LAUNCH_MODE=GROUP can coordinate kernel launches across ranks in
+        // the same implicit group rather than spinning in an intra-barrier that
+        // never fires when each rank posts independently.
+        const size_t count = shm_config.buffer_size / sizeof(float);
+        ASSERT_EQ(ncclSuccess, ncclGroupStart());
+        const auto result = shm_config.is_sender ? ncclSend(shm_config.send_buffer,
                                                             count,
                                                             ncclFloat,
                                                             config.peer_rank,
                                                             config.nccl_comm,
                                                             config.stream)
-                                                   : ncclRecv(shm_config.recv_buffer,
+                                                 : ncclRecv(shm_config.recv_buffer,
                                                             count,
                                                             ncclFloat,
                                                             config.peer_rank,
                                                             config.nccl_comm,
                                                             config.stream);
+        ASSERT_EQ(ncclSuccess, ncclGroupEnd());
 
         ASSERT_EQ(ncclSuccess, result)
             << "Rank " << config.world_rank << ": RCCL " << (shm_config.is_sender ? "Send" : "Recv")
@@ -495,6 +501,7 @@ public:
 
         // Perform the actual data transfer using NCCL
         const size_t count = buffer_size / sizeof(float);
+        ASSERT_EQ(ncclSuccess, ncclGroupStart());
         result             = shm_config.is_sender ? ncclSend(send_buffer,
                                                  count,
                                                  ncclFloat,
@@ -507,6 +514,7 @@ public:
                                                  config.peer_rank,
                                                  config.nccl_comm,
                                                  config.stream);
+        ASSERT_EQ(ncclSuccess, ncclGroupEnd());
 
         ASSERT_EQ(ncclSuccess, result) << "Rank " << config.world_rank << ": Large buffer "
                                        << (shm_config.is_sender ? "Send" : "Recv")
@@ -678,9 +686,11 @@ TEST_F(ShmMPITest, ShmTransfer_ZeroSizeBuffer)
     const int  peer      = is_sender ? 1 : 0;
 
     // Try to send/recv 0 elements
+    ASSERT_EQ(ncclSuccess, ncclGroupStart());
     const auto result = is_sender
                             ? ncclSend(buffer, 0, ncclFloat, peer, config.nccl_comm, config.stream)
                             : ncclRecv(buffer, 0, ncclFloat, peer, config.nccl_comm, config.stream);
+    ASSERT_EQ(ncclSuccess, ncclGroupEnd());
 
     ASSERT_EQ(ncclSuccess, result)
         << "Rank " << config.world_rank << ": Zero-size transfer should succeed";
@@ -719,10 +729,12 @@ TEST_F(ShmMPITest, ShmTransfer_VeryLargeBuffer)
     const size_t count     = large_size / sizeof(float);
 
     // Perform send/recv with large buffer
+    ASSERT_EQ(ncclSuccess, ncclGroupStart());
     const auto result
         = is_sender
               ? ncclSend(send_buffer, count, ncclFloat, peer, config.nccl_comm, config.stream)
               : ncclRecv(recv_buffer, count, ncclFloat, peer, config.nccl_comm, config.stream);
+    ASSERT_EQ(ncclSuccess, ncclGroupEnd());
 
     ASSERT_EQ(ncclSuccess, result)
         << "Rank " << config.world_rank << ": Large buffer transfer failed";
@@ -753,10 +765,12 @@ TEST_F(ShmMPITest, ShmTransfer_UnalignedBufferAddress)
     const bool is_sender = (config.world_rank == 0);
     const int  peer      = is_sender ? 1 : 0;
 
+    ASSERT_EQ(ncclSuccess, ncclGroupStart());
     const auto result
         = is_sender
               ? ncclSend(unaligned_buffer, 1024, ncclChar, peer, config.nccl_comm, config.stream)
               : ncclRecv(unaligned_buffer, 1024, ncclChar, peer, config.nccl_comm, config.stream);
+    ASSERT_EQ(ncclSuccess, ncclGroupEnd());
 
     // Don't fail the test - just report the result
     HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(config.stream));
@@ -791,16 +805,15 @@ TEST_F(ShmMPITest, ShmMultipleConsecutiveTransfers)
 
     for(int i = 0; i < kMultipleTransferCount; i++)
     {
+        ASSERT_EQ(ncclSuccess, ncclGroupStart());
         const auto result
             = is_sender
                   ? ncclSend(send_buffer, count, ncclFloat, peer, config.nccl_comm, config.stream)
                   : ncclRecv(recv_buffer, count, ncclFloat, peer, config.nccl_comm, config.stream);
+        ASSERT_EQ(ncclSuccess, ncclGroupEnd());
 
         ASSERT_EQ(ncclSuccess, result)
             << "Rank " << config.world_rank << ": Transfer " << i << " failed";
-
-        // Ensure both ranks have posted their NCCL operations before synchronizing
-        MPI_Barrier(MPI_COMM_WORLD);
 
         HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(config.stream));
     }
