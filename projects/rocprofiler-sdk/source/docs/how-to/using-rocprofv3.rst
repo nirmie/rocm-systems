@@ -420,9 +420,9 @@ OMPT trace
 
 .. code-block:: shell
 
-    rocprofv3 --ompt-trace --output-format csv -- <application_path>
+    rocprofv3 --ompt-trace --output-format rocpd -- <application_path>
 
-The above command generates an ``ompt_trace`` file prefixed with the process ID. ``--ompt-trace`` is also enabled implicitly by ``--sys-trace`` and ``--runtime-trace``.
+OMPT is a rocpd-only trace: records are written to the rocpd database (the default output format) and are not emitted by the direct CSV / JSON / Perfetto / OTF2 generators. If ``--ompt-trace`` is used with another ``--output-format``, ``rocprofv3`` warns and adds ``rocpd`` automatically; use ``rocpd convert`` to export OMPT to CSV / Perfetto / OTF2. ``--ompt-trace`` is also enabled implicitly by ``--sys-trace`` and ``--runtime-trace``.
 
 .. note::
 

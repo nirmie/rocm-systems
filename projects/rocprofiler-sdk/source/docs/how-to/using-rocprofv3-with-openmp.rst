@@ -100,9 +100,22 @@ The flags shown above capture HIP / HSA / kernel-dispatch / memory activity but 
 
 .. code-block:: bash
 
-    rocprofv3 --ompt-trace --kernel-trace --memory-copy-trace --output-format csv pftrace -- ./vector_add
+    rocprofv3 --ompt-trace --kernel-trace --memory-copy-trace --output-format rocpd -- ./vector_add
 
-This adds ``<pid>_ompt_trace.csv`` (plus corresponding entries in the JSON / Perfetto / OTF2 / rocpd outputs when selected). Combined with ``--kernel-trace`` / ``--memory-copy-trace``, each GPU kernel can be correlated with the surrounding ``target_submit`` / ``target_data_op`` region on the host and placed on the same timeline as the enclosing ``parallel`` / ``work`` regions and tasks.
+OMPT is a rocpd-only trace: records are written to the rocpd database (``rocpd`` is also the default output format) and are **not** emitted by the direct CSV / JSON / Perfetto / OTF2 generators. If ``--ompt-trace`` is combined with another ``--output-format``, ``rocprofv3`` prints a warning and adds ``rocpd`` automatically so OMPT data is not lost. To view OMPT in CSV / Perfetto / OTF2, convert the database with ``rocpd convert`` (see below).
+
+Combined with ``--kernel-trace`` / ``--memory-copy-trace``, each GPU kernel can be correlated with the surrounding ``target_submit`` / ``target_data_op`` region on the host and placed on the same timeline as the enclosing ``parallel`` / ``work`` regions and tasks.
+
+Exporting OMPT to other formats
+-------------------------------
+
+Use ``rocpd convert`` to export the rocpd database (including OMPT) to CSV, Perfetto, or OTF2:
+
+.. code-block:: bash
+
+    rocpd convert -i <pid>_results.db --output-format pftrace csv
+
+The Perfetto conversion preserves all OMPT events, including instantaneous ones (for example, ``parallel_begin`` / ``thread_begin``). The CSV and OTF2 conversions currently export ranged OMPT operations only.
 
 Filtering by category
 ---------------------
