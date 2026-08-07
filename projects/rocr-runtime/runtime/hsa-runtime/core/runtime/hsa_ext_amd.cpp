@@ -62,6 +62,8 @@
 #include "core/inc/default_signal.h"
 #include "core/inc/exceptions.h"
 #include "core/inc/intercept_queue.h"
+#define HSA_RUNTIME_CORE_HOTSWAP_DISPATCH_RUNTIME
+#include "core/inc/hotswap_dispatch.hpp"
 #include "core/inc/interrupt_signal.h"
 #include "core/inc/ipc_signal.h"
 #include "core/inc/runtime.h"
@@ -2527,6 +2529,24 @@ hsa_status_t hsa_amd_queue_create(hsa_agent_t agent_handle,
       if (status != HSA_STATUS_SUCCESS) {
         if (first_error == HSA_STATUS_SUCCESS) first_error = status;
         continue;
+      }
+
+      // OnDispatch HotSwap: wrap the queue so dispatch packets pass through the
+      // per-kernel swap interceptor before reaching hardware, exactly as
+      // hsa_queue_create() does. HIP creates its compute queues here, so
+      // without this the interceptor never runs and dispatches keep the tag
+      // stub's kernel_object. Opt-in; unchanged when disabled.
+      if (hotswap::dispatch::IsOnDispatchEnabled()) {
+        std::unique_ptr<core::Queue> lower(cmd_queue);
+        auto* iqueue = new (std::nothrow) core::InterceptQueue(std::move(lower));
+        if (iqueue != nullptr) {
+          auto* agent_box = new (std::nothrow) hsa_agent_t(agent_handle);
+          iqueue->AddInterceptor(hotswap::dispatch::DispatchInterceptor, agent_box);
+          cmd_queue = iqueue;
+        } else {
+          // Allocation failed: fall back to the plain queue.
+          cmd_queue = lower.release();
+        }
       }
 
       hsa_queue_t* hsa_q = core::Queue::Convert(cmd_queue);
