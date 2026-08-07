@@ -65,6 +65,9 @@
 #include "inc/hsa_ven_amd_aqlprofile.h"
 #include "core/inc/hsa_ext_amd_impl.h"
 #include "core/inc/hotswap.hpp"
+#include "core/inc/intercept_queue.h"
+#define HSA_RUNTIME_CORE_HOTSWAP_DISPATCH_RUNTIME
+#include "core/inc/hotswap_dispatch.hpp"
 #include "core/util/os.h"
 
 namespace rocr {
@@ -761,6 +764,24 @@ hsa_status_t hsa_queue_create(
   if (status != HSA_STATUS_SUCCESS) return status;
 
   assert(cmd_queue != nullptr && "Queue not returned but status was success.\n");
+
+  // OnDispatch HotSwap: wrap the queue so dispatch packets pass through the
+  // per-kernel swap interceptor before reaching hardware. Opt-in; when disabled
+  // the queue is returned unchanged. The interceptor needs the queue's agent to
+  // transpile-on-first-dispatch, so we stash it alongside.
+  if (hotswap::dispatch::IsOnDispatchEnabled()) {
+    std::unique_ptr<core::Queue> lower(cmd_queue);
+    auto* iqueue = new (std::nothrow) core::InterceptQueue(std::move(lower));
+    if (iqueue != nullptr) {
+      auto* agent_box = new (std::nothrow) hsa_agent_t(agent_handle);
+      iqueue->AddInterceptor(hotswap::dispatch::DispatchInterceptor, agent_box);
+      *queue = core::Queue::Convert(iqueue);
+      return HSA_STATUS_SUCCESS;
+    }
+    // Allocation failed: fall back to the plain queue (lower still owns it).
+    cmd_queue = lower.release();
+  }
+
   *queue = core::Queue::Convert(cmd_queue);
   return status;
 
@@ -2366,6 +2387,19 @@ hsa_status_t hsa_executable_load_agent_code_object(
   code_object.data = reader->GetCodeObjectMemory();
   code_object.size = reader->GetCodeObjectSize();
   code_object.uri = reader->GetUri();
+
+  // OnDispatch HotSwap: instead of transpiling the whole object now, load a
+  // cheap relabel+trap tag so CLR resolves valid handles, and remember the
+  // original bytes for per-kernel transpile at dispatch. Only for supported
+  // cross-gen loads; everything else falls through to the normal path.
+  if (hotswap::dispatch::IsOnDispatchEnabled()) {
+    hsa_status_t ondispatch_status = HSA_STATUS_ERROR;
+    if (hotswap::dispatch::TryLoadTagForOnDispatch(
+            executable, agent, code_object, options, loaded_code_object,
+            LoadSizedCodeObject, exec, &ondispatch_status)) {
+      return ondispatch_status;
+    }
+  }
 
   hotswap::LoadAgentCodeObjectCallbacks callbacks;
   callbacks.context = exec;

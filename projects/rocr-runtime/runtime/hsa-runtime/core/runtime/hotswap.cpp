@@ -330,10 +330,19 @@ std::string WithGfx1250SteppingFeature(const std::string& isa_name, Gfx1250Stepp
   return isa_name + Gfx1250SteppingFeature(stepping);
 }
 
+// Cross-generation HotSwap targets: devices that can run a gfx1250 source code
+// object once it has been transpiled down to their own ISA. Unlike the gfx12.5
+// same-family path, these are older architectures (CDNA gfx9xx) selected by the
+// running device, so eligibility is keyed on the device's gfx target.
+bool IsCrossGenHotswapTarget(const std::string& gfx_target) {
+  return gfx_target == "gfx942" || gfx_target == "gfx950";
+}
+
 bool HasCandidateHotswapRewrite(const AgentGfxRevision& gfx, const RewriteOptions& options) {
   return IsHotswapSupportedGfxRevision(gfx) ||
       (options.strict_mode_enabled && gfx.gfx_target == kGfx1250) ||
-      (options.entry_trampolines_enabled && IsGfx12_5Target(gfx.gfx_target));
+      (options.entry_trampolines_enabled && IsGfx12_5Target(gfx.gfx_target)) ||
+      IsCrossGenHotswapTarget(gfx.gfx_target);
 }
 
 std::optional<RewriteDecision> DecideHotswapRewrite(const AgentGfxRevision& gfx,
@@ -356,6 +365,20 @@ std::optional<RewriteDecision> DecideHotswapRewrite(const AgentGfxRevision& gfx,
     // Preserve the legacy A0 fallback when COMGR cannot rewrite a code object.
     // Required behavior remains opt-in through strict mode for non-A0 targets.
     decision.rewrite_required = false;
+    return decision;
+  }
+
+  // Cross-generation: a gfx1250 source object running on a gfx942/gfx950 device.
+  // Transpile from the gfx1250 (B0) source ISA down to the device's own ISA.
+  // request_entry_trampolines drives the comgr rewrite_with_options entry-
+  // trampoline (full transpile) flag; rewrite_required so a failed transpile is
+  // reported rather than silently falling back to the untranspiled object.
+  if (source_gfx == kGfx1250 && IsCrossGenHotswapTarget(target_gfx)) {
+    RewriteDecision decision;
+    decision.source_isa = WithGfx1250SteppingFeature(source_isa, Gfx1250Stepping::kB0);
+    decision.target_isa = target_isa;
+    decision.request_entry_trampolines = true;
+    decision.rewrite_required = true;
     return decision;
   }
 
@@ -536,6 +559,8 @@ RetargetCodeObjectResult TryRetargetCodeObject(const CodeObjectView& code_object
                                                OwnedElfBuffer* out_elf_buffer,
                                                size_t* out_elf_size) {
   if (IsComgrHotswapDisabled() || !code_object.data || code_object.size == 0) {
+    HOTSWAP_LOG("hotswap: retarget skipped (disabled=%d data=%p size=%zu)\n",
+                IsComgrHotswapDisabled() ? 1 : 0, code_object.data, code_object.size);
     return {};
   }
 
@@ -544,6 +569,9 @@ RetargetCodeObjectResult TryRetargetCodeObject(const CodeObjectView& code_object
   options.entry_trampolines_enabled = AreEntryTrampolinesRequested();
   options.strict_mode_enabled = IsStrictModeRequested();
   if (!IsAgentEligibleForHotswap(gfx, options)) {
+    HOTSWAP_LOG("hotswap: agent not eligible (gfx='%s' entry_trampolines=%d strict=%d)\n",
+                gfx.gfx_target.c_str(), options.entry_trampolines_enabled,
+                options.strict_mode_enabled);
     return {};
   }
 
