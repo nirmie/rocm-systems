@@ -133,6 +133,28 @@ bool Kernel::postLoad() {
   }
   assert(wavefront_size > 0);
 
+  // The private (scratch) and group (LDS) segment sizes above are parsed from
+  // the program's code-object metadata. Under HotSwap cross-gen transpilation
+  // that metadata describes the SOURCE ISA object, but the kernel actually
+  // loaded (and dispatched) is the transpiled target-ISA kernel, whose scratch
+  // usage can differ (e.g. wave32->wave64 raised IR spills to scratch the source
+  // never needed). Re-read both sizes from the loaded HSA executable symbol,
+  // which always reflects the real kernel, so the dispatch packet advertises the
+  // correct scratch and the command processor does not reject it
+  // (INVALID_DISPATCH_PARAMETERS / REGISTER_SIZE_INVALID). For a native load the
+  // symbol value equals the metadata value, so this is a no-op there.
+  uint32_t hsaPrivateSegmentSize = workitemPrivateSegmentByteSize_;
+  uint32_t hsaGroupSegmentSize = workgroupGroupSegmentByteSize_;
+  if (Hsa::executable_symbol_get_info(
+          symbol, HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_PRIVATE_SEGMENT_SIZE,
+          &hsaPrivateSegmentSize) == HSA_STATUS_SUCCESS) {
+    SetWorkitemPrivateSegmentByteSize(hsaPrivateSegmentSize);
+  }
+  if (Hsa::executable_symbol_get_info(
+          symbol, HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_GROUP_SEGMENT_SIZE,
+          &hsaGroupSegmentSize) == HSA_STATUS_SUCCESS) {
+    SetWorkgroupGroupSegmentByteSize(hsaGroupSegmentSize);
+  }
   workGroupInfo_.availableVGPRs_ = device().info().availableVGPRs_;
   workGroupInfo_.availableSGPRs_ = device().info().availableSGPRs_;
   workGroupInfo_.privateMemSize_ = workitemPrivateSegmentByteSize_;

@@ -908,6 +908,27 @@ set_tests_properties(intercept_queue_logic_test PROPERTIES
   LABELS "quick;standard;pr;pre-commit"
   TIMEOUT 60)
 
+# OnDispatch HotSwap: pure-logic unit tests (relabel+trap, swap table, packet
+# rewrite). No COMGR and no GPU -- exercises hotswap_dispatch.cpp against the
+# in-tree gfx1250 fixture and hand-built AQL packets.
+add_executable(hotswap_dispatch
+  ${HOTSWAP_TEST_ROOT}/hotswap_dispatch_test.cc
+  ${HSA_RUNTIME_ROOT}/core/runtime/hotswap_dispatch.cpp
+  "${HOTSWAP_GFX1250_HSACO_HDR}")
+add_dependencies(hotswap_dispatch hotswap_gfx1250_fixture)
+target_include_directories(hotswap_dispatch PRIVATE
+  ${HSA_RUNTIME_ROOT}
+  ${PROJECT_BINARY_DIR}
+  ${ROCRTST_ROOT}/gtest/include)
+# Pure-logic build: exclude the runtime-integration section so the test needs
+# no COMGR / GPU / runtime-internal headers.
+target_compile_definitions(hotswap_dispatch PRIVATE HOTSWAP_DISPATCH_PURE_ONLY)
+target_link_libraries(hotswap_dispatch ${GOOGLE_TEST_FRWK_NAME} pthread)
+add_test(NAME hotswap_dispatch COMMAND hotswap_dispatch)
+set_tests_properties(hotswap_dispatch PROPERTIES
+  LABELS "quick;standard;pr;pre-commit;hotswap"
+  TIMEOUT 60)
+
 #Build kernels
 add_custom_target(rocrtst_kernels ALL DEPENDS ${HSACO_TARG_LIST})
 
